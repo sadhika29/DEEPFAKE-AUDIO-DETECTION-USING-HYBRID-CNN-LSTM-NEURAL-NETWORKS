@@ -1,0 +1,34 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Heavy Datasets (Keep structure, ignore bulky audio archives)
+data/raw/bonafide/*.flac
+data/raw/bonafide/*.wav
+data/raw/spoof/*.flac
+data/raw/spoof/*.wav
+!data/raw/.gitkeep
+
+# Large trained models (>100MB on GitHub causes push errors)
+# models/*.keras
+# models/*.h5
+
+# Local logs and IDE files
+.vscode/
+.idea/
+*.log
