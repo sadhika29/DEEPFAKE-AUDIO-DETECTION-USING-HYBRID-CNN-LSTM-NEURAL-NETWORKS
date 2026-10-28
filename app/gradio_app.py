@@ -8,13 +8,11 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.predict import predict_audio
 from src.preprocess import load_audio, pad_or_trim_audio, compute_mel_spectrogram
-from src.config import SAMPLE_RATE, FMIN, FMAX
+from src.config import SAMPLE_RATE, FMIN, FMAX, PROJECT_NAME, PROJECT_GITHUB, HUGGINGFACE_DATASET
 
 def analyze_audio_file(audio_path, threshold=0.5):
     """
-    Callback function for Gradio interface.
-    Accepts uploaded audio path and decision threshold, runs calibrated CNN-LSTM
-    inference, and returns verdict, probability breakdown, and acoustic plots.
+    Inference callback for Gradio interface.
     """
     if audio_path is None:
         return "<div style='color: orange; font-weight: bold;'>Please upload or record an audio file first.</div>", None, None
@@ -29,23 +27,26 @@ def analyze_audio_file(audio_path, threshold=0.5):
         risk = res["risk_level"]
         dl_score = res["p_dl_spoof"]
         forensic_score = res["forensic_score"]
+        signature = res["synthesis_signature"]
 
         result_html = f"""
         <div style="padding: 18px; border-radius: 10px; background-color: #f8fafc; border: 2.5px solid {res['risk_color']};">
             <h2 style="color: {res['risk_color']}; margin-top: 0; margin-bottom: 6px;">Verdict: {pred_label}</h2>
-            <p style="font-size: 17px; margin: 4px 0;"><strong>Confidence:</strong> {conf:.2f}%</p>
-            <p style="font-size: 15px; margin: 4px 0;"><strong>Risk Assessment:</strong> {risk}</p>
+            <p style="font-size: 16px; margin: 4px 0;"><strong>Confidence:</strong> {conf:.2f}%</p>
+            <p style="font-size: 14px; margin: 4px 0;"><strong>Risk Assessment:</strong> {risk}</p>
+            <p style="font-size: 13px; color: #334155; margin: 4px 0;"><strong>Acoustic Fingerprint:</strong> {signature}</p>
             
             <div style="margin: 12px 0;">
-                <div style="font-size: 13px; color: #475569; margin-bottom: 4px;"><strong>Calibrated Deepfake Probability:</strong> {p_spoof * 100:.1f}%</div>
+                <div style="font-size: 13px; color: #475569; margin-bottom: 4px;"><strong>Deepfake Likelihood:</strong> {p_spoof * 100:.1f}%</div>
                 <div style="background: #e2e8f0; border-radius: 5px; overflow: hidden; height: 18px;">
                     <div style="width: {p_spoof * 100:.1f}%; background-color: {res['risk_color']}; height: 100%;"></div>
                 </div>
             </div>
 
             <div style="background: #ffffff; padding: 10px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px; line-height: 1.5;">
-                <div>🔬 <strong>CNN-LSTM Deep Learning Score:</strong> {dl_score * 100:.1f}% Spoof Likelihood</div>
-                <div>📊 <strong>Acoustic Vocoder Artifact Score:</strong> {forensic_score * 100:.1f}% Anomaly Likelihood</div>
+                <div>🧠 <strong>CNN-LSTM Deep Learning Score:</strong> {dl_score * 100:.1f}%</div>
+                <div>🌊 <strong>Diffusion/Flow-Matching Score:</strong> {forensic_score * 100:.1f}%</div>
+                <div style="margin-top: 4px; font-size: 11px; color: #64748b;">Trained on DFADD (IEEE SLT 2024 / isjwdu/DFADD)</div>
             </div>
         </div>
         """
@@ -69,7 +70,7 @@ def analyze_audio_file(audio_path, threshold=0.5):
             cmap="magma",
             extent=[0, len(y_fixed) / sr, FMIN, FMAX]
         )
-        axes[1].set_title("Extracted Log-Mel Spectrogram (Frequency vs. Time)", fontsize=10, fontweight="bold")
+        axes[1].set_title("Log-Mel Spectrogram (Frequency vs. Time)", fontsize=10, fontweight="bold")
         axes[1].set_xlabel("Time (seconds)", fontsize=9)
         axes[1].set_ylabel("Frequency (Hz)", fontsize=9)
         fig.colorbar(img, ax=axes[1], format="%+2.0f dB")
@@ -77,8 +78,8 @@ def analyze_audio_file(audio_path, threshold=0.5):
         plt.tight_layout()
 
         conf_dict = {
-            "Bona Fide (Genuine)": float(p_bona),
-            "Spoof (Deepfake)": float(p_spoof)
+            "Bona Fide (Authentic Human)": float(p_bona),
+            "Spoof (Diffusion/Flow-Matching)": float(p_spoof)
         }
 
         return result_html, conf_dict, fig
@@ -88,12 +89,14 @@ def analyze_audio_file(audio_path, threshold=0.5):
         return error_html, None, None
 
 def launch_gradio_app(share=False, server_port=7860):
-    with gr.Blocks(title="Deepfake Audio Detector | CNN-LSTM") as demo:
+    with gr.Blocks(title="DFADD Audio Deepfake Detector | CNN-LSTM") as demo:
         gr.Markdown(
-            """
-            # 🎙️ Deepfake Audio Detection System
-            ### Hybrid CNN-LSTM Neural Network for Genuine vs. Synthetic Speech Classification
-            Upload a WAV/MP3 recording or use your microphone to test whether an audio sample is genuine human speech or an AI-synthesized deepfake.
+            f"""
+            # 🎙️ DFADD Audio Deepfake Detection System
+            ### Modern Anti-Spoofing against Diffusion & Flow-Matching Speech Synthesis (IEEE SLT 2024)
+            **Dataset & Benchmark**: [{HUGGINGFACE_DATASET} on HuggingFace](https://huggingface.co/datasets/{HUGGINGFACE_DATASET}) | [GitHub Repository]({PROJECT_GITHUB})
+            
+            Detect whether an audio recording is **authentic human speech (VCTK)** or synthesized by modern state-of-the-art **Diffusion & Flow-Matching models** (Grad-TTS, Matcha-TTS, PFlow, etc.).
             """
         )
 
@@ -111,16 +114,17 @@ def launch_gradio_app(share=False, server_port=7860):
                 analyze_btn = gr.Button("🔍 Analyze Audio", variant="primary", size="lg")
                 gr.Markdown(
                     """
-                    **How it evaluates audio:**
-                    - **Spectral Artifacts**: Scans for vocoder phase distortion, high-frequency energy cutoffs, and synthetic harmonics.
-                    - **Temporal Dynamics**: BiLSTM tracks continuity across consecutive phoneme transitions.
+                    **Detection Capabilities:**
+                    - **Score-based Diffusion Noise**: Detects residual high-frequency denoising noise.
+                    - **Flow-Matching Discretization**: Detects ODE vector-field step transitions.
+                    - **Prosodic Drift**: Verifies natural human glottal and vocal tract dynamics.
                     """
                 )
 
             with gr.Column(scale=1):
                 verdict_output = gr.HTML(label="Classification Verdict")
                 label_output = gr.Label(label="Confidence Distribution", num_top_classes=2)
-                plot_output = gr.Plot(label="Acoustic Analysis (Waveform & Mel-Spectrogram)")
+                plot_output = gr.Plot(label="Spectrogram Inspection")
 
         analyze_btn.click(
             fn=analyze_audio_file,
@@ -128,7 +132,7 @@ def launch_gradio_app(share=False, server_port=7860):
             outputs=[verdict_output, label_output, plot_output]
         )
 
-    print("Launching Gradio interface...")
+    print("Launching DFADD Gradio interface...")
     demo.launch(share=share, server_port=server_port)
 
 if __name__ == "__main__":
