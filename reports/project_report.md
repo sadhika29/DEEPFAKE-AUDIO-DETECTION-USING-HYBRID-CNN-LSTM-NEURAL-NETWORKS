@@ -1,7 +1,5 @@
 # PROJECT REPORT: DFADD — AUDIO DEEPFAKE DETECTION AGAINST DIFFUSION & FLOW-MATCHING MODELS USING HYBRID CNN-LSTM NEURAL NETWORKS
 
-**Project Reference:** [DFADD: The Diffusion and Flow-Matching Based Audio Deepfake Dataset (IEEE SLT 2024)](https://arxiv.org/abs/2409.08731)  
-**Official Repository:** [`isjwdu/DFADD` on GitHub](https://github.com/isjwdu/DFADD)  
 **Dataset Resource:** [`isjwdu/DFADD` on Hugging Face](https://huggingface.co/datasets/isjwdu/DFADD)  
 **Candidate / Author:** Sadhika & Team  
 **Frameworks:** TensorFlow / Keras, Librosa, Hugging Face Datasets, Scikit-learn, Gradio / Streamlit  
