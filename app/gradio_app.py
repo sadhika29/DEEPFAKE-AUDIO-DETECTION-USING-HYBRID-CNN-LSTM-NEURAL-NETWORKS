@@ -4,63 +4,64 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import sys
 
-# Ensure src is on sys.path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from src.predict import predict_audio, get_model
+from src.predict import predict_audio
 from src.preprocess import load_audio, pad_or_trim_audio, compute_mel_spectrogram
-from src.config import BEST_MODEL_PATH, FINAL_MODEL_PATH, SAMPLE_RATE, FMIN, FMAX
+from src.config import SAMPLE_RATE, FMIN, FMAX
 
-def analyze_audio_file(audio_path):
+def analyze_audio_file(audio_path, threshold=0.5):
     """
     Callback function for Gradio interface.
-    Accepts uploaded or recorded audio path, runs CNN-LSTM model,
-    and returns predictions and feature visualization figure.
+    Accepts uploaded audio path and decision threshold, runs calibrated CNN-LSTM
+    inference, and returns verdict, probability breakdown, and acoustic plots.
     """
     if audio_path is None:
-        return "Please upload or record an audio file.", None, None
+        return "<div style='color: orange; font-weight: bold;'>Please upload or record an audio file first.</div>", None, None
 
     try:
-        # Run inference
-        res = predict_audio(audio_path)
+        res = predict_audio(audio_path, threshold=threshold)
         
-        # Format prediction text
         pred_label = res["prediction"]
         conf = res["confidence"]
         p_spoof = res["p_spoof"]
         p_bona = res["p_bonafide"]
         risk = res["risk_level"]
+        dl_score = res["p_dl_spoof"]
+        forensic_score = res["forensic_score"]
 
         result_html = f"""
-        <div style="padding: 16px; border-radius: 8px; background-color: #f8fafc; border: 2px solid {res['risk_color']};">
-            <h2 style="color: {res['risk_color']}; margin-top: 0;">Verdict: {pred_label}</h2>
-            <p style="font-size: 16px; margin: 4px 0;"><strong>Confidence:</strong> {conf:.2f}%</p>
-            <p style="font-size: 16px; margin: 4px 0;"><strong>Risk Assessment:</strong> {risk}</p>
-            <div style="margin-top: 12px; background: #e2e8f0; border-radius: 4px; overflow: hidden; height: 16px;">
-                <div style="width: {p_spoof * 100:.1f}%; background-color: {res['risk_color']}; height: 100%;"></div>
+        <div style="padding: 18px; border-radius: 10px; background-color: #f8fafc; border: 2.5px solid {res['risk_color']};">
+            <h2 style="color: {res['risk_color']}; margin-top: 0; margin-bottom: 6px;">Verdict: {pred_label}</h2>
+            <p style="font-size: 17px; margin: 4px 0;"><strong>Confidence:</strong> {conf:.2f}%</p>
+            <p style="font-size: 15px; margin: 4px 0;"><strong>Risk Assessment:</strong> {risk}</p>
+            
+            <div style="margin: 12px 0;">
+                <div style="font-size: 13px; color: #475569; margin-bottom: 4px;"><strong>Calibrated Deepfake Probability:</strong> {p_spoof * 100:.1f}%</div>
+                <div style="background: #e2e8f0; border-radius: 5px; overflow: hidden; height: 18px;">
+                    <div style="width: {p_spoof * 100:.1f}%; background-color: {res['risk_color']}; height: 100%;"></div>
+                </div>
             </div>
-            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px; color: #64748b;">
-                <span>Genuine Voice ({p_bona * 100:.1f}%)</span>
-                <span>Deepfake Voice ({p_spoof * 100:.1f}%)</span>
+
+            <div style="background: #ffffff; padding: 10px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px; line-height: 1.5;">
+                <div>🔬 <strong>CNN-LSTM Deep Learning Score:</strong> {dl_score * 100:.1f}% Spoof Likelihood</div>
+                <div>📊 <strong>Acoustic Vocoder Artifact Score:</strong> {forensic_score * 100:.1f}% Anomaly Likelihood</div>
             </div>
         </div>
         """
 
-        # Generate Waveform & Spectrogram Plot
         y, sr = load_audio(audio_path)
         y_fixed = pad_or_trim_audio(y)
         mel_spec = compute_mel_spectrogram(y_fixed, sr)[:, :, 0]
 
         fig, axes = plt.subplots(2, 1, figsize=(9, 5), gridspec_kw={'height_ratios': [1, 1.4]})
         
-        # Waveform
         t = np.linspace(0, len(y_fixed) / sr, len(y_fixed))
         axes[0].plot(t, y_fixed, color="#2563eb", lw=0.8)
         axes[0].set_title("Input Audio Waveform (3.0s Normalized)", fontsize=10, fontweight="bold")
         axes[0].set_ylabel("Amplitude", fontsize=9)
         axes[0].grid(True, linestyle="--", alpha=0.4)
 
-        # Spectrogram
         img = axes[1].imshow(
             mel_spec,
             origin="lower",
@@ -87,11 +88,6 @@ def analyze_audio_file(audio_path):
         return error_html, None, None
 
 def launch_gradio_app(share=False, server_port=7860):
-    """Launches Gradio application."""
-    custom_css = """
-    .gradio-container { max-width: 960px !important; margin: auto; }
-    """
-
     with gr.Blocks(title="Deepfake Audio Detector | CNN-LSTM") as demo:
         gr.Markdown(
             """
@@ -108,11 +104,16 @@ def launch_gradio_app(share=False, server_port=7860):
                     type="filepath",
                     label="Upload or Record Speech Audio (.wav, .mp3, .flac)"
                 )
+                threshold_slider = gr.Slider(
+                    minimum=0.1, maximum=0.9, value=0.5, step=0.05,
+                    label="Decision Threshold (Default: 0.5)"
+                )
                 analyze_btn = gr.Button("🔍 Analyze Audio", variant="primary", size="lg")
                 gr.Markdown(
                     """
-                    **Note:** The model evaluates spectral anomalies, harmonic distortion, and temporal phase transitions.
-                    Audio is automatically resampled to 16 kHz and adjusted to 3.0 seconds.
+                    **How it evaluates audio:**
+                    - **Spectral Artifacts**: Scans for vocoder phase distortion, high-frequency energy cutoffs, and synthetic harmonics.
+                    - **Temporal Dynamics**: BiLSTM tracks continuity across consecutive phoneme transitions.
                     """
                 )
 
@@ -123,7 +124,7 @@ def launch_gradio_app(share=False, server_port=7860):
 
         analyze_btn.click(
             fn=analyze_audio_file,
-            inputs=[audio_input],
+            inputs=[audio_input, threshold_slider],
             outputs=[verdict_output, label_output, plot_output]
         )
 
