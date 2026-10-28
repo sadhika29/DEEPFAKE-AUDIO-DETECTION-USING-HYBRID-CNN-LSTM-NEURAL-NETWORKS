@@ -18,10 +18,10 @@ Thumbs.db
 desktop.ini
 
 # Heavy Datasets (Keep structure, ignore bulky audio archives)
-data/raw/bonafide/*.flac
-data/raw/bonafide/*.wav
-data/raw/spoof/*.flac
-data/raw/spoof/*.wav
+data/raw/**/*.flac
+data/raw/**/*.wav
+data/raw/*.flac
+data/raw/*.wav
 !data/raw/.gitkeep
 
 # Large trained models (>100MB on GitHub causes push errors)

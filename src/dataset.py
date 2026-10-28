@@ -1,11 +1,14 @@
 import os
+import csv
 import random
 from pathlib import Path
 import numpy as np
-import pandas as pd
 import soundfile as sf
-import tensorflow as tf
-from sklearn.model_selection import train_test_split
+
+try:
+    import pandas as pd
+except Exception:
+    pd = None
 
 from src.config import (
     SAMPLE_RATE, DURATION, NUM_SAMPLES, RAW_DATA_DIR, DATA_DIR,
@@ -13,14 +16,46 @@ from src.config import (
 )
 from src.preprocess import extract_features_from_file
 
+def save_manifest(records, protocol_path):
+    """Saves records list to CSV using pure python csv or pandas."""
+    if pd is not None:
+        try:
+            df = pd.DataFrame(records)
+            df.to_csv(protocol_path, index=False)
+            return df
+        except Exception:
+            pass
+
+    # Pure Python CSV writer (bypasses any Windows DLL locks)
+    if not records:
+        return records
+    fieldnames = list(records[0].keys())
+    with open(protocol_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(records)
+    return records
+
+def load_manifest(protocol_path):
+    """Loads records from CSV."""
+    if pd is not None:
+        try:
+            return pd.read_csv(protocol_path)
+        except Exception:
+            pass
+
+    records = []
+    with open(protocol_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            row["label"] = int(row.get("label", 0))
+            records.append(row)
+    return records
+
 def stream_dfadd_dataset(num_per_class=60, output_dir=RAW_DATA_DIR, split="test"):
     """
     Downloads authentic speech and diffusion/flow-matching spoofed speech
     directly from the official DFADD benchmark on Hugging Face (isjwdu/DFADD).
-    
-    Includes:
-    - Bona Fide: Authentic human speech from VCTK corpus.
-    - Spoof: Modern speech synthesized by Grad-TTS, Matcha-TTS, PFlow, etc.
     """
     try:
         from datasets import load_dataset
@@ -38,13 +73,10 @@ def stream_dfadd_dataset(num_per_class=60, output_dir=RAW_DATA_DIR, split="test"
 
         print(f"Streaming {num_per_class} authentic VCTK voices & {num_per_class} modern diffusion/flow-matching samples...")
         for item in ds:
-            # Parse label
             raw_label = str(item.get("label", "")).lower()
             audio_name = str(item.get("audio_name", "")).lower()
-            
             is_bonafide = ("bonafide" in raw_label) or ("bonafide" in audio_name)
             
-            # Extract audio waveform
             audio_info = item["audio"]
             if isinstance(audio_info, dict) and "array" in audio_info:
                 audio_array = np.array(audio_info["array"], dtype=np.float32)
@@ -77,31 +109,19 @@ def stream_dfadd_dataset(num_per_class=60, output_dir=RAW_DATA_DIR, split="test"
             if bona_count >= num_per_class and spoof_count >= num_per_class:
                 break
 
-        df = pd.DataFrame(records)
         protocol_path = DATA_DIR / "protocol.csv"
-        df.to_csv(protocol_path, index=False)
-        print(f"DFADD data loaded: {len(df)} samples logged to {protocol_path}")
-        return df
+        manifest = save_manifest(records, protocol_path)
+        print(f"DFADD data loaded: {len(records)} samples logged to {protocol_path}")
+        return manifest
 
     except Exception as e:
-        print(f"Notice: Streaming from Hugging Face encountered: {e}")
-        print("Falling back to acoustic diffusion speech simulation...")
+        print(f"Notice: Remote stream: {e}. Generating physical diffusion speech simulation...")
         return generate_dfadd_demo_dataset(output_dir=output_dir, num_per_class=num_per_class)
 
 def generate_diffusion_speech_sample(label_type="bonafide", duration=DURATION, sr=SAMPLE_RATE):
     """
     Synthesizes speech signals modeling the specific physical signatures of
     Diffusion & Flow-Matching models vs. Natural Human Speech:
-    
-    1. Bona Fide (Authentic Human Voice):
-       - Natural vocal tract formant resonances (F1, F2, F3, F4)
-       - Dynamic pitch drift and biological micro-jitter/shimmer
-       - Syllabic articulation envelopes
-    
-    2. Spoofed (Diffusion / Flow-Matching TTS):
-       - Generated via reverse-time SDE/ODE flow integration
-       - Characteristic score-matching micro-noise residuals across high-frequency Mel bins
-       - Flow-matching step discretizations and unnatural over-smoothing in silent regions
     """
     t = np.linspace(0, duration, int(sr * duration), endpoint=False)
     
@@ -129,8 +149,6 @@ def generate_diffusion_speech_sample(label_type="bonafide", duration=DURATION, s
         audio += np.random.normal(0, 0.018, len(t))
 
     else:
-        # Diffusion / Flow-Matching characteristics:
-        # Extremely clean formants with high-frequency score-matching noise floor
         rigid_f0 = np.random.choice([125.0, 155.0, 175.0, 205.0])
         phase = 2 * np.pi * rigid_f0 * t
         audio = np.zeros_like(t)
@@ -139,13 +157,12 @@ def generate_diffusion_speech_sample(label_type="bonafide", duration=DURATION, s
             amp = (1.0 / np.sqrt(harmonic)) * np.random.uniform(0.85, 1.15)
             audio += amp * np.sin(harmonic * phase)
 
-        # Flow-matching vector field integration artifacts (Euler/RK4 step discretization)
-        step_rate = np.random.choice([25, 50])  # NFE (Number of Function Evaluations)
-        discrete_steps = np.floor(t * step_rate) / step_rate
-        ode_artifact = np.sin(2 * np.pi * 4200 * discrete_steps) * 0.04
+        # Flow-matching vector field integration artifacts
+        discrete_steps = np.floor(t * 35.0) / 35.0
+        ode_artifact = np.sin(2 * np.pi * 4200 * discrete_steps) * 0.045
         audio += ode_artifact
 
-        # High-frequency diffusion denoising residue (>4.5 kHz)
+        # High-frequency diffusion denoising residue (>4.2 kHz)
         diffusion_noise = np.random.normal(0, 0.035, len(t)) * (np.sin(2 * np.pi * 4800 * t) ** 2)
         audio += diffusion_noise
 
@@ -162,14 +179,12 @@ def generate_dfadd_demo_dataset(output_dir=RAW_DATA_DIR, num_per_class=60):
     spoof_dir.mkdir(parents=True, exist_ok=True)
 
     records = []
-    print(f"Generating {num_per_class} authentic VCTK samples...")
     for i in range(num_per_class):
         audio = generate_diffusion_speech_sample("bonafide")
         fp = bonafide_dir / f"dfadd_bonafide_{i:04d}.wav"
         sf.write(str(fp), audio, SAMPLE_RATE)
         records.append({"file_path": str(fp), "label": LABEL_BONAFIDE, "class_name": "bonafide", "system": "VCTK"})
 
-    print(f"Generating {num_per_class} Diffusion/Flow-matching samples...")
     systems = ["GradTTS", "MatchaTTS", "PFlow"]
     for i in range(num_per_class):
         audio = generate_diffusion_speech_sample("spoof")
@@ -178,19 +193,15 @@ def generate_dfadd_demo_dataset(output_dir=RAW_DATA_DIR, num_per_class=60):
         sf.write(str(fp), audio, SAMPLE_RATE)
         records.append({"file_path": str(fp), "label": LABEL_SPOOF, "class_name": "spoof", "system": sys_name})
 
-    df = pd.DataFrame(records)
     protocol_path = DATA_DIR / "protocol.csv"
-    df.to_csv(protocol_path, index=False)
-    return df
+    manifest = save_manifest(records, protocol_path)
+    return manifest
 
 def load_dataset_dataframe(protocol_csv=None, auto_generate=True):
     """Loads dataset manifest from CSV or triggers DFADD streaming."""
-    if protocol_csv and Path(protocol_csv).exists():
-        return pd.read_csv(protocol_csv)
-
-    default_csv = DATA_DIR / "protocol.csv"
+    default_csv = Path(protocol_csv) if protocol_csv else (DATA_DIR / "protocol.csv")
     if default_csv.exists():
-        return pd.read_csv(default_csv)
+        return load_manifest(default_csv)
 
     bonafide_dir = RAW_DATA_DIR / "bonafide"
     spoof_dir = RAW_DATA_DIR / "spoof"
@@ -200,28 +211,32 @@ def load_dataset_dataframe(protocol_csv=None, auto_generate=True):
         if len(bonafide_files) > 0 and len(spoof_files) > 0:
             records = [{"file_path": str(p), "label": LABEL_BONAFIDE, "class_name": "bonafide"} for p in bonafide_files]
             records += [{"file_path": str(p), "label": LABEL_SPOOF, "class_name": "spoof"} for p in spoof_files]
-            df = pd.DataFrame(records)
-            df.to_csv(default_csv, index=False)
-            return df
+            return save_manifest(records, default_csv)
 
     if auto_generate:
         return stream_dfadd_dataset()
     else:
         raise FileNotFoundError("No DFADD dataset found.")
 
-class AudioDataGenerator(tf.keras.utils.Sequence):
+class AudioDataGenerator:
     """
-    Keras Sequence generator with proper (batch_size, 1) target tensor shapes.
+    Keras-compatible sequence generator handling both pandas DataFrames and record lists.
     """
-    def __init__(self, df, batch_size=BATCH_SIZE, shuffle=True):
-        self.df = df.copy().reset_index(drop=True)
+    def __init__(self, data, batch_size=BATCH_SIZE, shuffle=True):
+        if hasattr(data, "to_dict"):
+            self.records = data.to_dict(orient="records")
+        elif isinstance(data, list):
+            self.records = list(data)
+        else:
+            self.records = list(data)
+            
         self.batch_size = batch_size
         self.shuffle = shuffle
-        self.indices = np.arange(len(self.df))
+        self.indices = np.arange(len(self.records))
         self.on_epoch_end()
 
     def __len__(self):
-        return int(np.ceil(len(self.df) / self.batch_size))
+        return int(np.ceil(len(self.records) / self.batch_size))
 
     def on_epoch_end(self):
         if self.shuffle:
@@ -229,12 +244,10 @@ class AudioDataGenerator(tf.keras.utils.Sequence):
 
     def __getitem__(self, index):
         batch_indices = self.indices[index * self.batch_size:(index + 1) * self.batch_size]
-        batch_df = self.df.iloc[batch_indices]
+        X_batch, y_batch = [], []
 
-        X_batch = []
-        y_batch = []
-
-        for _, row in batch_df.iterrows():
+        for idx in batch_indices:
+            row = self.records[idx]
             try:
                 features = extract_features_from_file(row["file_path"])
                 X_batch.append(features)

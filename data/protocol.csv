@@ -1,0 +1,7 @@
+file_path,label,class_name,system
+C:\Users\Sadhika\.gemini\antigravity\scratch\deepfake-audio-detection\data\raw\bonafide\dfadd_bonafide_0000.wav,0,bonafide,VCTK
+C:\Users\Sadhika\.gemini\antigravity\scratch\deepfake-audio-detection\data\raw\bonafide\dfadd_bonafide_0001.wav,0,bonafide,VCTK
+C:\Users\Sadhika\.gemini\antigravity\scratch\deepfake-audio-detection\data\raw\bonafide\dfadd_bonafide_0002.wav,0,bonafide,VCTK
+C:\Users\Sadhika\.gemini\antigravity\scratch\deepfake-audio-detection\data\raw\spoof\dfadd_GradTTS_0000.wav,1,spoof,GradTTS
+C:\Users\Sadhika\.gemini\antigravity\scratch\deepfake-audio-detection\data\raw\spoof\dfadd_MatchaTTS_0001.wav,1,spoof,MatchaTTS
+C:\Users\Sadhika\.gemini\antigravity\scratch\deepfake-audio-detection\data\raw\spoof\dfadd_PFlow_0002.wav,1,spoof,PFlow

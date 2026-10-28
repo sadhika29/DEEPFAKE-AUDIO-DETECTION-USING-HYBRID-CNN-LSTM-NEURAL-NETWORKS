@@ -1,7 +1,6 @@
 import argparse
 from pathlib import Path
 import numpy as np
-import tensorflow as tf
 
 from src.config import BEST_MODEL_PATH, FINAL_MODEL_PATH, CLASS_NAMES
 from src.preprocess import extract_features_from_file, load_audio, compute_acoustic_forensic_metrics
@@ -10,6 +9,7 @@ _CACHED_MODEL = None
 
 def get_model(model_path=None):
     """Loads and caches the trained DFADD CNN-LSTM model."""
+    import tensorflow as tf
     global _CACHED_MODEL
     if _CACHED_MODEL is not None and model_path is None:
         return _CACHED_MODEL
@@ -28,33 +28,40 @@ def get_model(model_path=None):
 def calculate_diffusion_forensic_score(y, sr):
     """
     Evaluates physical acoustic cues of Diffusion & Flow-Matching synthesis:
-    1. Score-based diffusion residual noise in upper Mel bands (>4 kHz).
-    2. Over-smoothed ODE trajectory transitions across phonemes.
-    3. Low pitch/centroid variation (robotic pitch vs natural human prosody).
+    1. Pitch Dynamism: Natural human vocal tracts exhibit dynamic pitch drift (centroid var > 60),
+       while synthetic models exhibit unnaturally flat pitch trajectories (centroid var < 25).
+    2. High-Frequency Energy Ratio (>4 kHz):
+       Natural speech retains smooth vocal tract decay (HF ratio 0.05 - 0.20),
+       while diffusion/vocoders exhibit sharp cutoffs (<0.035) or high-frequency hiss (>0.30).
+    3. Spectral Flatness: Measures noise floor residuals.
     """
     metrics = compute_acoustic_forensic_metrics(y, sr)
     
     # 1. Pitch / Prosodic Dynamism
     cent_var = metrics["centroid_variance"]
-    if cent_var < 220:
-        pitch_score = 0.85
-    elif cent_var < 380:
-        pitch_score = 0.55
+    if cent_var < 25.0:
+        pitch_score = 0.90   # Near-zero pitch variation (synthetic deepfake)
+    elif cent_var < 50.0:
+        pitch_score = 0.65
+    elif cent_var < 80.0:
+        pitch_score = 0.35
     else:
-        pitch_score = 0.15
+        pitch_score = 0.10   # Natural human vocal tract modulation
 
-    # 2. Diffusion High Frequency Noise Floor
+    # 2. High Frequency Energy Ratio (>4 kHz)
     hf_ratio = metrics["high_frequency_ratio"]
-    if hf_ratio > 0.22 or hf_ratio < 0.025:
-        hf_score = 0.80
+    if hf_ratio < 0.035 or hf_ratio > 0.30:
+        hf_score = 0.85      # Severe vocoder cutoff or high-frequency buzz
+    elif hf_ratio < 0.055:
+        hf_score = 0.55
     else:
-        hf_score = 0.25
+        hf_score = 0.15      # Natural speech frequency distribution
 
-    # 3. Spectral Flatness (residual score noise)
+    # 3. Spectral Flatness
     flatness = metrics["spectral_flatness"]
-    flat_score = min(flatness * 14.0, 1.0)
+    flat_score = min(flatness * 10.0, 1.0)
 
-    score = 0.45 * pitch_score + 0.35 * hf_score + 0.20 * flat_score
+    score = 0.50 * pitch_score + 0.40 * hf_score + 0.10 * flat_score
     return float(np.clip(score, 0.0, 1.0)), metrics
 
 def predict_audio(file_path, model_path=None, threshold=0.5):
